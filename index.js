@@ -2,7 +2,6 @@
  * Group Name Locker Bot (Fast + Instant Reset)
  * Developer: Axshu 🩷
  * Description: This bot locks the group name and resets it instantly if changed.
- * Features: 2-second delay with spam prevention, won't change your own profile name
  */
 
 const login = require("ws3-fca");
@@ -20,12 +19,7 @@ try {
 
 // ✅ Group Info (change these)
 const GROUP_THREAD_ID = "1541322477013599";        // Group ka ID
-const LOCKED_GROUP_NAME = "🔐 आफत की दीदी फातिमा हगनी को बाबरी मस्जिद में चोदूं 🐼";     // Locked name
-
-// Variables for spam prevention
-let lastTitleCheck = {};
-let resetTimeout = null;
-let isProcessing = false;
+const LOCKED_GROUP_NAME = "😂 आफत की दीदी फातिमा हगनी को बाबरी मस्जिद में चोदूं 🐼";     // Locked name
 
 // ✅ Express Server to keep bot alive (for Render or UptimeRobot)
 const app = express();
@@ -56,79 +50,6 @@ function safeSetTitle(api, title, threadID, cb) {
 }
 
 /**
- * Check and reset group name with 2-second delay and spam prevention
- */
-function checkAndResetTitle(api, forceCheck = false) {
-  if (isProcessing) {
-    console.log("⚠️ Already processing a title reset, skipping...");
-    return;
-  }
-
-  const now = Date.now();
-  
-  // Spam prevention: Don't check more than once every 2 seconds
-  if (!forceCheck && lastTitleCheck[GROUP_THREAD_ID]) {
-    const timeSinceLastCheck = now - lastTitleCheck[GROUP_THREAD_ID];
-    if (timeSinceLastCheck < 2000) {
-      console.log(`⏳ Skipping check (${timeSinceLastCheck}ms since last check)`);
-      return;
-    }
-  }
-
-  lastTitleCheck[GROUP_THREAD_ID] = now;
-  
-  // Get current thread info
-  api.getThreadInfo(GROUP_THREAD_ID, (err, info) => {
-    if (err) {
-      console.error("❌ Error fetching group info:", err);
-      return;
-    }
-
-    const currentName = info?.name || info?.threadName || "Unknown";
-    
-    if (currentName !== LOCKED_GROUP_NAME) {
-      console.warn(`⚠️ Name changed to "${currentName}", scheduling reset in 2 seconds...`);
-      
-      // Clear any existing timeout
-      if (resetTimeout) {
-        clearTimeout(resetTimeout);
-      }
-      
-      // Set timeout for 2 seconds
-      resetTimeout = setTimeout(() => {
-        isProcessing = true;
-        
-        // Double-check after 2 seconds before resetting
-        api.getThreadInfo(GROUP_THREAD_ID, (err2, info2) => {
-          if (err2) {
-            console.error("❌ Error in second verification:", err2);
-            isProcessing = false;
-            return;
-          }
-          
-          const verifiedName = info2?.name || info2?.threadName || "Unknown";
-          
-          if (verifiedName !== LOCKED_GROUP_NAME) {
-            console.log(`🔄 Resetting title from "${verifiedName}" to "${LOCKED_GROUP_NAME}"...`);
-            safeSetTitle(api, LOCKED_GROUP_NAME, GROUP_THREAD_ID, (resetErr) => {
-              if (!resetErr) {
-                console.log("✅ Title reset successfully!");
-              }
-              isProcessing = false;
-            });
-          } else {
-            console.log("✅ Name already corrected, no reset needed.");
-            isProcessing = false;
-          }
-        });
-      }, 2000);
-    } else {
-      console.log(`✅ Group name is already "${LOCKED_GROUP_NAME}"`);
-    }
-  });
-}
-
-/**
  * Polling fallback: checks group name every `pollIntervalMs`.
  */
 function startPollingFallback(api, pollIntervalMs = 30 * 1000) {
@@ -136,24 +57,34 @@ function startPollingFallback(api, pollIntervalMs = 30 * 1000) {
 
   function loop() {
     if (stopped) return;
-    
-    checkAndResetTitle(api);
-    
-    setTimeout(loop, pollIntervalMs);
+    api.getThreadInfo(GROUP_THREAD_ID, (err, info) => {
+      if (err) {
+        console.error("❌ Polling: error fetching group info:", err);
+        return setTimeout(loop, 60 * 1000);
+      }
+
+      const currentName = info?.name || info?.threadName || "Unknown";
+      if (currentName !== LOCKED_GROUP_NAME) {
+        console.warn(
+          `⚠️ Polling detected name change ("${currentName}") → resetting immediately...`
+        );
+        safeSetTitle(api, LOCKED_GROUP_NAME, GROUP_THREAD_ID, () => {
+          setTimeout(loop, 5 * 1000);
+        });
+      } else {
+        setTimeout(loop, pollIntervalMs);
+      }
+    });
   }
-  
   loop();
 
   return () => {
     stopped = true;
-    if (resetTimeout) {
-      clearTimeout(resetTimeout);
-    }
   };
 }
 
 /**
- * Event-driven instant reset with spam prevention
+ * Event-driven instant reset
  */
 function startEventListener(api) {
   try {
@@ -175,14 +106,20 @@ function startEventListener(api) {
             event.logMessageData?.threadID ||
             event.logMessageData?.threadId;
 
-          // Only respond to group thread ID, not profile changes
-          if (threadId && threadId.toString() === GROUP_THREAD_ID.toString()) {
+          if (threadId === GROUP_THREAD_ID) {
             console.warn("⚠️ Event-driven: group title change detected.");
-            
-            // Wait 500ms before checking (let the change register)
             setTimeout(() => {
-              checkAndResetTitle(api);
-            }, 500);
+              safeSetTitle(api, LOCKED_GROUP_NAME, GROUP_THREAD_ID, (err) => {
+                if (err) {
+                  console.error(
+                    "❌ Event-driven: failed to reset title:",
+                    err
+                  );
+                } else {
+                  console.log("🔁 Event-driven: reset executed.");
+                }
+              });
+            }, 200);
           }
         }
       }
@@ -202,12 +139,7 @@ login({ appState }, (err, api) => {
   console.log("✅ Logged in successfully.");
   console.log("👨‍💻 Developer: Axshu 🩷");
   console.log("🚀 Group name locker (fast + instant) activated.");
-  console.log(`🔒 Locked name: "${LOCKED_GROUP_NAME}"`);
-  console.log(`⏱️  Reset delay: 2 seconds with spam prevention`);
 
-  // Initial check
-  checkAndResetTitle(api, true);
-  
   startEventListener(api); // Event-driven instant reset
-  startPollingFallback(api, 30 * 1000); // Polling fallback every 30 seconds
+  startPollingFallback(api, 30 * 1000); // Polling fallback
 });
